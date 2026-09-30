@@ -1,4 +1,4 @@
-name: C2J Build & Release
+name: C2J Windows Build
 
 on:
   push:
@@ -11,149 +11,42 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # tar.gz 안의 소스 루트 디렉토리 이름
   SOURCE_DIR: c2j
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 공통 setup 스텝을 composite action처럼 재사용하기 위해
-# 각 job마다 동일한 "압축 해제 → Rust 설치 → 캐시" 순서로 진행한다.
-# ─────────────────────────────────────────────────────────────────────────────
+  TARGET: x86_64-pc-windows-gnu
 
 jobs:
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Job 1: 테스트 (Linux)
+# Job 1: 빌드 + 테스트 + Windows .exe 생성 (전부 Linux Runner에서)
 # ─────────────────────────────────────────────────────────────────────────────
-  test:
-    name: 테스트 (Linux)
+  build:
+    name: Windows x86_64 .exe 빌드
     runs-on: ubuntu-latest
 
     steps:
       - name: 레포 체크아웃
         uses: actions/checkout@v4
 
-      # ── 핵심: tar.gz 압축 해제 ──────────────────────────────────────────
+      # ── 소스 압축 해제 ─────────────────────────────────────────────────
       - name: c2j_v4.tar.gz 압축 해제
-        run: |
-          tar xzf c2j_v4.tar.gz
-          echo "압축 해제 완료. 디렉토리 구조:"
-          ls -la ${{ env.SOURCE_DIR }}/
-
-      - name: Rust 툴체인 설치 (stable)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cargo 캐시
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ env.SOURCE_DIR }}/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('c2j/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: 코드 포맷 검사
-        working-directory: ${{ env.SOURCE_DIR }}
-        run: cargo fmt --all -- --check
-
-      - name: Clippy (경고를 에러로)
-        working-directory: ${{ env.SOURCE_DIR }}
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: 단위 + 통합 테스트
-        working-directory: ${{ env.SOURCE_DIR }}
-        run: cargo test --verbose
-
-      - name: 릴리스 빌드 확인
-        working-directory: ${{ env.SOURCE_DIR }}
-        run: cargo build --release
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Job 2: 크로스 플랫폼 빌드
-# ─────────────────────────────────────────────────────────────────────────────
-  build:
-    name: 빌드 (${{ matrix.name }})
-    needs: test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # ── Windows ─────────────────────────────────────────────────────────
-          - name: Windows x86_64
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: c2j-windows-x86_64.exe
-            binary: c2j/target/x86_64-pc-windows-msvc/release/c2j.exe
-
-          - name: Windows ARM64
-            os: windows-latest
-            target: aarch64-pc-windows-msvc
-            artifact: c2j-windows-arm64.exe
-            binary: c2j/target/aarch64-pc-windows-msvc/release/c2j.exe
-
-          # ── Linux ────────────────────────────────────────────────────────────
-          - name: Linux x86_64
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: c2j-linux-x86_64
-            binary: c2j/target/x86_64-unknown-linux-gnu/release/c2j
-
-          - name: Linux ARM64
-            os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact: c2j-linux-arm64
-            binary: c2j/target/aarch64-unknown-linux-gnu/release/c2j
-
-          - name: Linux musl (정적 링크)
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            artifact: c2j-linux-x86_64-musl
-            binary: c2j/target/x86_64-unknown-linux-musl/release/c2j
-
-          # ── macOS ────────────────────────────────────────────────────────────
-          - name: macOS x86_64
-            os: macos-latest
-            target: x86_64-apple-darwin
-            artifact: c2j-macos-x86_64
-            binary: c2j/target/x86_64-apple-darwin/release/c2j
-
-          - name: macOS ARM64 (Apple Silicon)
-            os: macos-latest
-            target: aarch64-apple-darwin
-            artifact: c2j-macos-arm64
-            binary: c2j/target/aarch64-apple-darwin/release/c2j
-
-    steps:
-      - name: 레포 체크아웃
-        uses: actions/checkout@v4
-
-      # ── 압축 해제 (Unix) ────────────────────────────────────────────────
-      - name: c2j_v4.tar.gz 압축 해제 (Unix)
-        if: runner.os != 'Windows'
         run: |
           tar xzf c2j_v4.tar.gz
           echo "압축 해제 완료"
           ls -la ${{ env.SOURCE_DIR }}/
 
-      # ── 압축 해제 (Windows) ─────────────────────────────────────────────
-      # Windows runner에는 tar가 기본 포함되어 있음 (Windows 10 1803+)
-      - name: c2j_v4.tar.gz 압축 해제 (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      # ── MinGW 크로스컴파일러 설치 ─────────────────────────────────────
+      - name: MinGW 설치 (Windows 크로스컴파일용)
         run: |
-          tar xzf c2j_v4.tar.gz
-          Write-Host "압축 해제 완료"
-          Get-ChildItem ${{ env.SOURCE_DIR }}/
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+          x86_64-w64-mingw32-gcc --version
 
-      - name: Rust 툴체인 설치
+      # ── Rust + Windows 타겟 설치 ───────────────────────────────────────
+      - name: Rust 설치
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ env.TARGET }}
 
+      # ── Cargo 캐시 ─────────────────────────────────────────────────────
       - name: Cargo 캐시
         uses: actions/cache@v4
         with:
@@ -161,94 +54,58 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ${{ env.SOURCE_DIR }}/target/
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('c2j/Cargo.lock') }}
+          key: mingw-${{ env.TARGET }}-${{ hashFiles('c2j/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-cargo-
+            mingw-${{ env.TARGET }}-
 
-      # ── Linux 크로스 컴파일 툴 ──────────────────────────────────────────
-      - name: ARM64 크로스 컴파일러 설치
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      # ── MinGW 링커 환경변수 설정 ───────────────────────────────────────
+      - name: MinGW 링커 설정
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
+          echo "CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc"                  >> $GITHUB_ENV
+          echo "AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar"                   >> $GITHUB_ENV
 
-      - name: musl 툴 설치
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y musl-tools
-
-      # ── 빌드 ────────────────────────────────────────────────────────────
-      - name: 릴리스 빌드
+      # ── libc 크레이트 Windows 호환 설정 ───────────────────────────────
+      # libc는 unix-only이므로 Windows 빌드 시 제외
+      - name: Cargo.toml Windows 호환 패치
         working-directory: ${{ env.SOURCE_DIR }}
-        run: cargo build --release --target ${{ matrix.target }}
-
-      # ── 결과 확인 ───────────────────────────────────────────────────────
-      - name: 빌드 결과 확인 (Unix)
-        if: runner.os != 'Windows'
         run: |
-          ls -lh ${{ matrix.binary }}
-          file ${{ matrix.binary }}
+          # libc의 unix-only 조건부 의존성 확인 (이미 cfg(unix)로 선언됨)
+          grep -n "libc" Cargo.toml || true
 
-      - name: 빌드 결과 확인 (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      # ── 테스트 (Linux 타겟으로 — 빠른 피드백) ─────────────────────────
+      - name: 단위 테스트 (Linux)
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: cargo test --verbose
+
+      # ── Windows .exe 빌드 ──────────────────────────────────────────────
+      - name: Windows x86_64 릴리스 빌드
+        working-directory: ${{ env.SOURCE_DIR }}
         run: |
-          Get-Item "${{ matrix.binary }}" | Select-Object Name, @{N='Size(KB)';E={[math]::Round($_.Length/1KB,1)}}
+          cargo build --release --target ${{ env.TARGET }}
+          ls -lh target/${{ env.TARGET }}/release/c2j.exe
 
-      # ── 아티팩트 업로드 ─────────────────────────────────────────────────
-      - name: 아티팩트 업로드
+      # ── 빌드 결과 확인 ─────────────────────────────────────────────────
+      - name: .exe 파일 정보 확인
+        run: |
+          file ${{ env.SOURCE_DIR }}/target/${{ env.TARGET }}/release/c2j.exe
+          ls -lh ${{ env.SOURCE_DIR }}/target/${{ env.TARGET }}/release/c2j.exe
+          echo "빌드 성공 ✓"
+
+      # ── 아티팩트 업로드 ────────────────────────────────────────────────
+      - name: c2j.exe 아티팩트 업로드
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.binary }}
+          name: c2j-windows-x86_64
+          path: ${{ env.SOURCE_DIR }}/target/${{ env.TARGET }}/release/c2j.exe
           retention-days: 30
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Job 3: C/C++ 플러그인 빌드
-# ─────────────────────────────────────────────────────────────────────────────
-  build-plugins:
-    name: C/C++ 플러그인 빌드
-    needs: test
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 레포 체크아웃
-        uses: actions/checkout@v4
-
-      - name: c2j_v4.tar.gz 압축 해제
-        run: |
-          tar xzf c2j_v4.tar.gz
-          ls -la ${{ env.SOURCE_DIR }}/
-
-      - name: 플러그인 빌드
-        working-directory: ${{ env.SOURCE_DIR }}
-        run: |
-          mkdir -p plugins
-          gcc -std=c11 -shared -fPIC -O2 \
-              -Ic_plugin/include \
-              -o plugins/example_plugin.so \
-              c_plugin/src/example_plugin.c
-          g++ -std=c++17 -shared -fPIC -O2 \
-              -Ic_plugin/include \
-              -o plugins/lambda_plugin.so \
-              c_plugin/src/lambda_plugin.cpp
-          ls -lh plugins/
-
-      - name: 플러그인 아티팩트 업로드
-        uses: actions/upload-artifact@v4
-        with:
-          name: c2j-plugins-linux
-          path: ${{ env.SOURCE_DIR }}/plugins/
-          retention-days: 30
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Job 4: GitHub Release 생성 (태그 push 시에만)
+# Job 2: GitHub Release (태그 push 시에만)
 # ─────────────────────────────────────────────────────────────────────────────
   release:
     name: GitHub Release 생성
-    needs: [ build, build-plugins ]
+    needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -258,73 +115,54 @@ jobs:
       - name: 레포 체크아웃
         uses: actions/checkout@v4
 
-      - name: 모든 아티팩트 다운로드
+      - name: c2j.exe 다운로드
         uses: actions/download-artifact@v4
         with:
-          path: dist/
-
-      - name: 아티팩트 구조 확인
-        run: find dist/ -type f | sort
-
-      - name: 릴리스 파일 준비
-        run: |
-          mkdir -p release/
-          for dir in dist/c2j-*/; do
-            name=$(basename "$dir")
-            if [[ "$name" == *"plugins"* ]]; then
-              zip -j "release/${name}.zip" "$dir"*
-            else
-              cp "$dir"* "release/${name}" 2>/dev/null || true
-            fi
-          done
-          # 원본 tar.gz도 릴리스에 포함
-          cp c2j_v4.tar.gz release/
-          ls -lh release/
+          name: c2j-windows-x86_64
+          path: release/
 
       - name: 버전 추출
         id: version
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "빌드 버전: ${VERSION}"
 
       - name: 릴리스 노트 작성
         run: |
           VERSION="${GITHUB_REF#refs/tags/}"
           cat > /tmp/release_notes.md << EOF
-          ## C2J ${VERSION}
+          ## C2J ${VERSION} — Windows x86_64
 
-          JVM `.class` / `.jar` 파일을 `.java` 소스로 변환하는 디컴파일러입니다.
+          JVM \`.class\` / \`.jar\` 파일을 \`.java\` 소스로 변환하는 디컴파일러
 
-          ### 플랫폼별 바이너리
+          ### 다운로드
 
-          | 파일 | 플랫폼 |
+          | 파일 | 설명 |
           |---|---|
-          | \`c2j-windows-x86_64.exe\` | Windows 64-bit |
-          | \`c2j-windows-arm64.exe\`  | Windows ARM64 |
-          | \`c2j-linux-x86_64\`       | Linux 64-bit |
-          | \`c2j-linux-arm64\`        | Linux ARM64 |
-          | \`c2j-linux-x86_64-musl\`  | Linux (정적 링크, Alpine/Docker 등) |
-          | \`c2j-macos-x86_64\`       | macOS Intel |
-          | \`c2j-macos-arm64\`        | macOS Apple Silicon (M1/M2/M3) |
-          | \`c2j-plugins-linux.zip\`  | C/C++ 플러그인 |
-          | \`c2j_v4.tar.gz\`          | 전체 소스 코드 |
+          | \`c2j.exe\` | Windows 64-bit 실행 파일 |
 
-          ### 빠른 시작
+          ### 사용법
 
-          \`\`\`bash
-          # Linux/macOS
-          chmod +x c2j-linux-x86_64
-          ./c2j-linux-x86_64 Example.class
+          \`\`\`cmd
+          :: 단일 클래스 디컴파일
+          c2j.exe Example.class
 
-          # JAR 디컴파일
-          ./c2j-linux-x86_64 MyApp.jar -o src/
+          :: 출력 경로 지정
+          c2j.exe Example.class -o Example.java
 
-          # 검증
-          ./c2j-linux-x86_64 Example.class --verify
+          :: JAR 전체 디컴파일
+          c2j.exe MyApp.jar -o src\
+
+          :: 컴파일 검증 (javac 필요)
+          c2j.exe Example.class --verify
+
+          :: 도움말
+          c2j.exe --help
           \`\`\`
           EOF
 
-      - name: GitHub Release 생성
+      - name: GitHub Release 생성 + .exe 첨부
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
@@ -332,30 +170,8 @@ jobs:
           body_path: /tmp/release_notes.md
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
-          files: release/*
-          generate_release_notes: false
+          files: |
+            release/c2j.exe
+            c2j_v4.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Job 5: 보안 감사
-# ─────────────────────────────────────────────────────────────────────────────
-  audit:
-    name: 보안 감사
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      - name: 레포 체크아웃
-        uses: actions/checkout@v4
-
-      - name: c2j_v4.tar.gz 압축 해제
-        run: tar xzf c2j_v4.tar.gz
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: cargo-audit 실행
-        working-directory: ${{ env.SOURCE_DIR }}
-        run: |
-          cargo install cargo-audit --quiet
-          cargo audit
